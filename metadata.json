@@ -1,0 +1,32 @@
+{
+    "@context": "https://schema.org",
+    "@graph": [
+        {
+            "@type": "Dataset",
+            "name": "BVI-Lowlight: Fully registered datasets for low-light image and video enhancement",
+            "description": "Low-light images and video footage often exhibit issues due to the interplay of various parameters such as aperture, shutter speed, and ISO settings. These interactions can lead to distortions, especially in extreme lighting conditions. This distortion is primarily caused by the inverse relationship between decreasing light intensity and increasing photon noise, which gets amplified with higher sensor gain. Additionally, secondary characteristics like white balance and color effects can also be adversely affected and may require post-processing correction. These distortions not only impact the perceived quality of the images but also pose significant challenges for machine learning tasks, including classification and object detection. This is particularly evident when considering the susceptibility of deep learning networks to adversarial examples.The BVI-Lowlight datasets offer fully registered low-light content alongside their corresponding clean and normal light condition. This dataset includes both images and videos, enabling the use of supervised learning approaches and performance evaluation through objective metrics such as PSNR and SSIM.",
+            "creator": {
+                "@type": "Person",
+                "@id": "https://orcid.org/0000-0002-2122-5781",
+                "name": "Nantheera Anantrasirichai",
+                "url": "https://orcid.org/0000-0002-2122-5781"
+            },
+            "publisher": {
+                "@type": "Organization",
+                "@id": "https://doi.org/10.17616/R3H77H",
+                "name": "IEEE Dataport",
+                "url": "https://ieee-dataport.org",
+                "logo": {
+                    "@type": "ImageObject",
+                    "url": "https://ieee-dataport.org/sites/all/themes/dataport/images/dataport-logo.svg"
+                }
+            },
+            "identifier": "https://dx.doi.org/10.21227/mzny-8c77",
+            "citation": "https://dx.doi.org/10.21227/mzny-8c77",
+            "isAccessibleForFree": true,
+            "keywords": "Signal Processing, Machine Learning, Image Processing, Computer Vision",
+            "license": "https://creativecommons.org/licenses/by/4.0/",
+            "url": "https://ieee-dataport.org/open-access/bvi-lowlight-fully-registered-datasets-low-light-image-and-video-enhancement"
+        }
+    ]
+}
