@@ -33,7 +33,6 @@ class DiffusiveRestoration:
 
         with torch.no_grad():
             for i, (x, y) in enumerate(val_loader):
-                start_time = time.time()  # Start timing
                 x_cond = x[:, :self.config.data.channels, :, :].to(self.diffusion.device)
                 b, c, h, w = x_cond.shape
                 img_h_32 = int(32 * np.ceil(h / 32.0))
@@ -43,25 +42,6 @@ class DiffusiveRestoration:
                 x_output = x_output[:, :, :h, :w]
                 filename = f"{y[0]}.png"
                 utils.logging.save_image(x_output, os.path.join(image_folder, f"{y[0]}.png"))
-                end_time = time.time()  # End timing
-                processing_time = end_time - start_time  # Calculate processing time
-                processing_times.append(processing_time)  # Store processing time
-                filenames_and_times.append((filename, processing_time))  # Store filename and processing time
-                print(f"Processing image {filename} took {processing_time:.2f} seconds")
-        # Calculate average, min, and max image inference times
-        average_processing_time = sum(processing_times) / len(processing_times)
-        min_processing_time, min_filename = min(filenames_and_times, key=lambda x: x[1])
-        max_processing_time, max_filename = max(filenames_and_times, key=lambda x: x[1])
-
-        print(f"Average processing time: {average_processing_time:.2f} seconds")
-        print(f"Minimum processing time: {min_processing_time:.2f} seconds (Image: {min_filename})")
-        print(f"Maximum processing time: {max_processing_time:.2f} seconds (Image: {max_filename})")
-
-        # Save the details to a file
-        with open("processing_times_details.txt", "w") as file:
-            file.write(f"Average processing time: {average_processing_time:.2f} seconds\n")
-            file.write(f"Minimum processing time: {min_processing_time:.2f} seconds (Image: {min_filename})\n")
-            file.write(f"Maximum processing time: {max_processing_time:.2f} seconds (Image: {max_filename})\n")
 
     def diffusive_restoration(self, x_cond):
         x_output = self.diffusion.model(x_cond)
