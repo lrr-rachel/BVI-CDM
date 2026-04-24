@@ -11,13 +11,13 @@ BASICSR_JIT = os.getenv('BASICSR_JIT')
 if BASICSR_JIT == 'True':
     print('BASICSR_JIT True')
     from torch.utils.cpp_extension import load
-    module_path = os.path.dirname(__file__)
+    module_path = os.path.dirname(os.path.abspath(__file__))
     deform_conv_ext = load(
         'deform_conv',
         sources=[
-            os.path.join('.', 'src', 'deform_conv_ext.cpp'),
-            os.path.join('.', 'src', 'deform_conv_cuda.cpp'),
-            os.path.join('.', 'src', 'deform_conv_cuda_kernel.cu'),
+            os.path.join(module_path, 'src', 'deform_conv_ext.cpp'),
+            os.path.join(module_path, 'src', 'deform_conv_cuda.cpp'),
+            os.path.join(module_path, 'src', 'deform_conv_cuda_kernel.cu'),
         ],
     )
 else:

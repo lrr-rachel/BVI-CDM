@@ -3,8 +3,6 @@ import torch.nn as nn
 import warnings
 import math
 
-from .DefConv import DeformConv3d
-
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -115,101 +113,55 @@ class Dilated_Resblock(nn.Module):
 
         return out
 
-class DeformConv3D_Block(nn.Module):
-    def __init__(self, inp_feat, out_feat, kernel_size=3, stride=1, padding=1, bias=False):
-        super(DeformConv3D_Block, self).__init__()
-        self.deform_conv = DeformConv3d(inp_feat, out_feat, kernel_size=kernel_size, stride=stride, padding=padding,
-                                        bias=bias)
-        self.bn = nn.BatchNorm3d(out_feat)
-        self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x):
-        x = self.deform_conv(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        return x
-
-
-class HFRM(nn.Module):
-    def __init__(self, in_channels, out_channels, layer):
-        super(HFRM, self).__init__()
+class InterscaleHFRM(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(InterscaleHFRM, self).__init__()
 
         self.conv_head = Depth_conv(in_channels, out_channels)
 
         self.dilated_block_LH = Dilated_Resblock(out_channels, out_channels)
         self.dilated_block_HL = Dilated_Resblock(out_channels, out_channels)
+
+        # [ADD] =================== Interscale cross-attention ====================
         self.dilated_block_HH = Dilated_Resblock(out_channels, out_channels)
-
-        # deconv3d
-        self.dcn3d_block_LH = DeformConv3D_Block(3, 3, kernel_size=3, stride=1, padding=1, bias=False)
-        self.dcn3d_block_HL = DeformConv3D_Block(3, 3, kernel_size=3, stride=1, padding=1, bias=False)
-        self.dcn3d_block_HH = DeformConv3D_Block(3, 3, kernel_size=3, stride=1, padding=1, bias=False)
-
         # interscale cross-attention
         self.cross_attention0 = cross_attention(out_channels, num_heads=8)
         self.cross_attention1 = cross_attention(out_channels, num_heads=8)
         self.cross_attention2 = cross_attention(out_channels, num_heads=8)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
 
-        # middle conv
-        self.conv_mid_1 = Depth_conv(out_channels, in_channels)
-        self.conv_mid_2 = Depth_conv(in_channels, out_channels)
-        self.conv_tail = Depth_conv(out_channels, in_channels)
         # fuse frames
-        self.conv_out = Depth_conv(in_channels, 3)
+        self.conv_tail = Depth_conv(out_channels, in_channels)
 
+    def forward(self, x, y):
 
-
-    def forward(self, x, y, layer):
-
-        b, c, h, w = x.shape 
+        b, c, h, w = x.shape
 
         residual = x
 
         x = self.conv_head(x)
 
-        # extract high-pass sub-bands
-        x_HL, x_LH, x_HH = x[:b//3, ...], x[b//3:2*b//3, ...], x[2*b//3:, ...] 
+        x_HL, x_LH, x_HH = x[:b//3, ...], x[b//3:2*b//3, ...], x[2*b//3:, ...]
 
-        # Upsample y for interscale cross-attention
+
+        # ====================== Upsample y for interscale cross-attention ======================
         y = self.upsample(y)
         y = self.conv_head(y)
         y_HL, y_LH, y_HH = y[:b//3, ...], y[b//3:2*b//3, ...], y[2*b//3:, ...]
 
-        # interscale cross-attention
-        x_y_HH = self.cross_attention0(y_HH, x_HH)
-        x_y_HL = self.cross_attention1(y_HL, x_HL)
-        x_y_LH = self.cross_attention2(y_LH, x_LH)
+        # interscale cross-attention: query from x (fine), key and value from y (coarse)
+        x_y_HH = self.cross_attention0(x_HH, y_HH)
+        x_y_HL = self.cross_attention1(x_HL, y_HL)
+        x_y_LH = self.cross_attention2(x_LH, y_LH)
 
-        if layer != 0:
-            # print("==> 3D def Conv")
-            x_y_HL = self.conv_mid_1(x_y_HL)
-            x_y_LH = self.conv_mid_1(x_y_LH)
-            x_y_HH = self.conv_mid_1(x_y_HH)
+        # fuse and refinement
+        out_HL = self.dilated_block_HL(x_HL + x_y_HL)
+        out_LH = self.dilated_block_LH(x_LH + x_y_LH)
+        out_HH = self.dilated_block_HH(x_HH + x_y_HH)
 
-            x_y_HL = x_y_HL.view(b//3, c//3, 3, h, w).permute(0, 2, 1, 3, 4) # to (b,c,t,h,w)
-            x_y_LH = x_y_LH.view(b//3, c//3, 3, h, w).permute(0, 2, 1, 3, 4) # to (b,c,t,h,w)
-            x_y_HH = x_y_HH.view(b//3, c//3, 3, h, w).permute(0, 2, 1, 3, 4) # to (b,c,t,h,w)
+        # =======================================================================================
 
-            x_HL = self.dcn3d_block_HL(x_y_HL)
-            x_LH = self.dcn3d_block_LH(x_y_LH)
-            x_HH = self.dcn3d_block_HH(x_y_HH)
+        out = self.conv_tail(torch.cat((out_HL, out_LH, out_HH), dim=0))
 
-            x_HL = x_HL.view(b//3, c, h, w)
-            x_LH = x_LH.view(b//3, c, h, w)
-            x_HH = x_HH.view(b//3, c, h, w)
-
-            x_HL = self.conv_mid_2(x_HL)
-            x_LH = self.conv_mid_2(x_LH)
-            x_HH = self.conv_mid_2(x_HH)
-        else:
-            # print("==> dilation blocks")
-            x_HL = self.dilated_block_HL(x_y_HL)
-            x_LH = self.dilated_block_LH(x_y_LH)
-            x_HH = self.dilated_block_HH(x_y_HH)
-
-        out = self.conv_tail(torch.cat((x_HL, x_LH, x_HH), dim=0))
-        out = self.conv_out(out + residual)
-
-        return out
-
+        return out + residual

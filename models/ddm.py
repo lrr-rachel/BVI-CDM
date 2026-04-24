@@ -10,7 +10,7 @@ from models.unet import DiffusionUNet
 from models.pcdunet import PCDUNet
 from models.wavelet import DWT, IWT
 from pytorch_msssim import ssim
-from models.mods import HFRM
+from models.mods import InterscaleHFRM
 
 
 def data_transform(X):
@@ -114,8 +114,8 @@ class Net(nn.Module):
         self.config = config
         self.device = config.device
 
-        self.high_enhance0 = HFRM(in_channels=15, out_channels=32,layer=0)
-        self.high_enhance1 = HFRM(in_channels=15, out_channels=32,layer=1)
+        self.high_enhance0 = InterscaleHFRM(in_channels=3, out_channels=32)
+        self.high_enhance1 = InterscaleHFRM(in_channels=3, out_channels=32)
         if config.model.pcd_unet:
             self.Unet = PCDUNet(config)
         else:
@@ -169,41 +169,23 @@ class Net(nn.Module):
         dwt, idwt = DWT(), IWT()
         input_img = x[:, :self.config.data.channels, :, :]
         n, c, h, w = input_img.shape
-        # print("input image shape:",input_img.shape)
         input_img_norm = data_transform(input_img)
         input_dwt = dwt(input_img_norm)
-        # print("input_dwt 0 shape ", input_dwt.shape)
-        support_channel_one_side = (self.config.data.supporting_frames - 1) // 2 * 3
-        # input_LL, input_high0 = input_dwt[:n, ...], input_dwt[n:, support_channel_one_side : support_channel_one_side + 3, ...]
-        # input_LL, input_high0 = input_dwt[:n, ...], input_dwt[n:, support_channel_one_side - 3: support_channel_one_side + 3*2, ...]
-        input_LL, input_high0 = input_dwt[:n, ...], input_dwt[n:, ...]
 
-        # input_high0 = self.high_enhance0(input_high0)
-        # print("input LL 0:",input_LL.shape)
-        # print("input high 0:", input_high0.shape)
+        support_channel_one_side = (self.config.data.supporting_frames - 1) // 2 * 3
+        # Light - input only middle frame in High-pass
+        input_LL, input_high0 = input_dwt[:n, ...], input_dwt[n:, support_channel_one_side : support_channel_one_side + 3, ...]
 
         input_LL_dwt = dwt(input_LL)
-        # input_LL_LL, input_high1 = input_LL_dwt[:n, ...], input_LL_dwt[n:, support_channel_one_side : support_channel_one_side + 3, ...]
-        # input_LL_LL, input_high1 = input_LL_dwt[:n, ...], input_LL_dwt[n:, support_channel_one_side - 3: support_channel_one_side + 3*2, ...]
-        input_LL_LL, input_high1 = input_LL_dwt[:n, ...], input_LL_dwt[n:, ...]
-        # input_high1 = self.high_enhance1(input_high1)
-        # print("input_dwt 1 shape ", input_LL_dwt.shape)
-        # print("input LL 1:",input_LL_LL.shape)
-        # print("input high 1:", input_high1.shape)
+        input_LL_LL, input_high1 = input_LL_dwt[:n, ...], input_LL_dwt[n:, support_channel_one_side : support_channel_one_side + 3, ...]
 
-        # NEW Add cross-layer attention
+        # cross-layer attention
         input_LL_LL_dwt = dwt(input_LL_LL)
-        # input_LL_LL_LL, input_high2 = input_LL_LL_dwt[:n, ...], input_LL_LL_dwt[n:, support_channel_one_side : support_channel_one_side + 3, ...]
-        # input_LL_LL_LL, input_high2 = input_LL_LL_dwt[:n, ...], input_LL_LL_dwt[n:, support_channel_one_side - 3: support_channel_one_side + 3*2, ...]
-        input_LL_LL_LL, input_high2 = input_LL_LL_dwt[:n, ...], input_LL_LL_dwt[n:, ...]
-        # print("input_dwt 2 shape ", input_LL_LL_dwt.shape)
-        # print("input LL 2:",input_LL_LL_LL.shape)
-        # print("input high 2:", input_high2.shape)
+        input_LL_LL_LL, input_high2 = input_LL_LL_dwt[:n, ...], input_LL_LL_dwt[n:, support_channel_one_side : support_channel_one_side + 3, ...]
+    
 
-        input_high0 = self.high_enhance0(input_high0,input_high1,layer=0)
-        input_high1 = self.high_enhance1(input_high1,input_high2,layer=1)
-        # print("After HFRM input_high0",input_high0.shape)
-        # print("After HFRM input_high1",input_high1.shape)
+        input_high0 = self.high_enhance0(input_high0, input_high1)
+        input_high1 = self.high_enhance1(input_high1, input_high2)
 
         b = self.betas.to(input_img.device)
         # NEW Use 3rd-layer Low Freq.
@@ -226,14 +208,11 @@ class Net(nn.Module):
             x = gt_LL_LL * a.sqrt() + e * (1.0 - a).sqrt()
             # denoise
             noise_output = self.Unet(torch.cat([input_LL_LL, x], dim=1), t.float())
-            # print("PCDUNet Diff output",noise_output.shape)
             denoise_LL_LL = self.sample_training(input_LL_LL, b)
-            # print(f"calculate pred_LL: denoise_LL_LL {denoise_LL_LL.shape}, input_high1 {input_high1.shape}")
             # inverse diffusion to get the denoised image
             pred_LL = idwt(torch.cat((denoise_LL_LL, input_high1), dim=0))
             pred_x = idwt(torch.cat((pred_LL, input_high0), dim=0))
             pred_x = inverse_data_transform(pred_x)
-            # print("pred_LL after inverse",pred_x.shape)
 
             data_dict["input_high0"] = input_high0
             data_dict["input_high1"] = input_high1
@@ -275,12 +254,19 @@ class DenoisingDiffusion(object):
         self.TV_loss = TVLoss()
 
         self.optimizer, self.scheduler = utils.optimize.get_optimizer(self.config, self.model.parameters())
-        self.start_epoch, self.step = 3, 12000
+        self.start_epoch, self.step = 0, 0
 
     def load_ddm_ckpt(self, load_path, ema=False):
         checkpoint = utils.logging.load_checkpoint(load_path, None)
         self.model.load_state_dict(checkpoint['state_dict'], strict=True)
-        self.ema_helper.load_state_dict(checkpoint['ema_helper'])
+        if 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if 'scheduler' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
+        if 'ema_helper' in checkpoint:
+            self.ema_helper.load_state_dict(checkpoint['ema_helper'])
+        self.step = checkpoint.get('step', 0)
+        self.start_epoch = checkpoint.get('epoch', 0)
         if ema:
             self.ema_helper.ema(self.model)
         print("=> loaded checkpoint {} step {}".format(load_path, self.step))
@@ -378,5 +364,4 @@ class DenoisingDiffusion(object):
                 pred_x = out["pred_x"]
                 pred_x = pred_x[:, :, :img_h, :img_w]
                 utils.logging.save_image(pred_x, os.path.join(image_folder, str(step), f"{y[0]}.png"))
-
 
